@@ -1,6 +1,6 @@
 # ipsae.py
 # script for calculating the ipSAE score for scoring pairwise protein-protein interactions in AlphaFold2 and AlphaFold3 models
-# https://www.biorxiv.org/content/10.1101/2025.02.10.637595v1
+# https://www.biorxiv.org/content/10.1101/2025.02.10.637595v2
 
 # Also calculates:
 #    pDockQ: Bryant, Pozotti, and Eloffson. https://www.nature.com/articles/s41467-022-28865-w
@@ -9,20 +9,21 @@
 
 # Roland Dunbrack
 # Fox Chase Cancer Center
-# version 3
-# April 6, 2025
+# version 4
+# January 3, 2026: Fixed Boltz2 issues (PDB and mmCIF format; chainIDs)
 # MIT license: script can be modified and redistributed for non-commercial and commercial use, as long as this information is reproduced.
 
-# includes support for Boltz1 structures and structures with nucleic acids
+# includes support for Boltz structures and structures with nucleic acids
 
 # It may be necessary to install numpy with the following command:
 #      pip install numpy
 
 # Usage:
 
-#  python ipsae.py <path_to_af2_pae_file>     <path_to_af2_pdb_file>     <pae_cutoff> <dist_cutoff>
-#  python ipsae.py <path_to_af3_pae_file>     <path_to_af3_cif_file>     <pae_cutoff> <dist_cutoff>
-#  python ipsae.py <path_to_boltz1_pae_file>  <path_to_boltz1_cif_file>  <pae_cutoff> <dist_cutoff>
+#  python ipsae.py <path_to_af2_pae_file>        <path_to_af2_pdb_file>     <pae_cutoff> <dist_cutoff>
+#  python ipsae.py <path_to_af3_pae_file>        <path_to_af3_cif_file>     <pae_cutoff> <dist_cutoff>
+#  python ipsae.py <path_to_boltz_pae_npz_file>  <path_to_boltz_cif_file>   <pae_cutoff> <dist_cutoff>
+#  python ipsae.py <path_to_boltz_pae_npz_file>  <path_to_boltz_pdb_file>   <pae_cutoff> <dist_cutoff>
 #
 # All output files will be in same path/folder as cif or pdb file
 
@@ -36,17 +37,20 @@ np.set_printoptions(threshold=np.inf)  # for printing out full numpy arrays for 
 
 # Ensure correct usage
 if len(sys.argv) < 5:
-    print("Usage for AF2:")
+    print("Usage for AF2 (PDB format):")
     print("   python ipsae.py <path_to_pae_json_file> <path_to_pdb_file> <pae_cutoff> <dist_cutoff>")
-    print("   python ipsae.py RAF1_KSR1_scores_rank_001_alphafold2_multimer_v3_model_4_seed_003.json RAF1_KSR1_unrelaxed_rank_001_alphafold2_multimer_v3_model_4_seed_003.pdb 10 10")
+    print("   python ipsae.py RAF1_KSR1_scores_rank_001_alphafold2_multimer_v3_model_4_seed_003.json RAF1_KSR1_unrelaxed_rank_001_alphafold2_multimer_v3_model_4_seed_003.pdb 10 15")
     print("")
-    print("Usage for AF3:")
+    print("Usage for AF3 (mmCIF format):")
     print("   python ipsae.py <path_to_pae_json_file> <path_to_mmcif_file> <pae_cutoff> <dist_cutoff>")
-    print("   python ipsae.py fold_aurka_tpx2_full_data_0.json  fold_aurka_tpx2_model_0.cif 10 10")
+    print("   python ipsae.py fold_aurka_tpx2_full_data_0.json  fold_aurka_tpx2_model_0.cif 10 15")
     print("")
-    print("Usage for Boltz1:")
+    print("Usage for Boltz (PDB or mmCIF format):")
     print("   python ipsae.py <path_to_pae_npz_file> <path_to_mmcif_file> <pae_cutoff> <dist_cutoff>")
-    print("   python ipsae.py pae_AURKA_TPX2_model_0.npz  AURKA_TPX2_model_0.cif 10 10")
+    print("   python ipsae.py <path_to_pae_npz_file> <path_to_pdb_file> <pae_cutoff> <dist_cutoff>")
+    print("   python ipsae.py pae_AURKA_TPX2_model_0.npz  AURKA_TPX2_model_0.cif 10 15")
+    print("   python ipsae.py pae_AURKA_TPX2_model_0.npz  AURKA_TPX2_model_0.pdb 10 15")
+
     sys.exit(1)
 
 pae_file_path =    sys.argv[1]
@@ -58,33 +62,42 @@ if pae_cutoff<10:  pae_string="0"+pae_string
 dist_string =      str(int(dist_cutoff))
 if dist_cutoff<10: dist_string="0"+dist_string
 
-#pae_AURKA_TPX2_model_0.npz
-
-if ".pdb" in pdb_path:
+if ".pdb" in pdb_path and pae_file_path.endswith(".json"):
     pdb_stem=pdb_path.replace(".pdb","")
     path_stem =     f'{pdb_path.replace(".pdb","")}_{pae_string}_{dist_string}'
     af2 =    True
     af3 =    False
-    boltz1 = False
+    boltz =  False
     cif =    False
+
 elif ".cif" in pdb_path and pae_file_path.endswith(".json"):
     pdb_stem=pdb_path.replace(".cif","")
     path_stem =     f'{pdb_path.replace(".cif","")}_{pae_string}_{dist_string}'
     af2 =    False
     af3 =    True
-    boltz1 = False
+    boltz =  False
     cif =    True
-elif ".cif" in pdb_path and pae_file_path.endswith(".npz"):
+
+elif ".cif" in pdb_path and pae_file_path.endswith(".npz"):  # Boltz1/2 in cif format
     pdb_stem=pdb_path.replace(".cif","")
     path_stem =     f'{pdb_path.replace(".cif","")}_{pae_string}_{dist_string}'
     af2 =    False
     af3 =    False
-    boltz1 = True
+    boltz  = True
     cif =    True
+
+elif ".pdb" in pdb_path and pae_file_path.endswith(".npz"):  # Boltz1/2 in pdb format
+    pdb_stem=pdb_path.replace(".pdb","")
+    path_stem =     f'{pdb_path.replace(".pdb","")}_{pae_string}_{dist_string}'
+    af2 =    False
+    af3 =    False
+    boltz  = True
+    cif =    False
+
 else:
     print("Wrong PDB or PAE file type ", pdb_path)
     sys.exit()
-    
+
 file_path =        path_stem + ".txt"
 file2_path =       path_stem + "_byres.txt"
 pml_path =         path_stem + ".pml"
@@ -96,22 +109,25 @@ OUT2 =             open(file2_path,'w')
 
 # Define the ptm and d0 functions
 def ptm_func(x,d0):
-    return 1.0/(1+(x/d0)**2.0)  
+    return 1.0/(1+(x/d0)**2.0)
 ptm_func_vec=np.vectorize(ptm_func)  # vector version
 
 # Define the d0 functions for numbers and arrays; minimum value = 1.0; from Yang and Skolnick, PROTEINS: Structure, Function, and Bioinformatics 57:702–710 (2004)
 def calc_d0(L,pair_type):
     L=float(L)
-    if L<27: L=27
     min_value=1.0
     if pair_type=='nucleic_acid': min_value=2.0
-    d0=1.24*(L-15)**(1.0/3.0) - 1.8
+    if L>27:
+        d0=1.24*(L-15)**(1.0/3.0) - 1.8
+    else:
+        d0=1.0
     return max(min_value, d0)
 
-def calc_d0_array(L,pair_type):
+def calc_d0_array(L, pair_type):
     # Convert L to a NumPy array if it isn't already one (enables flexibility in input types)
+    # fixed 01.03.2026: now returns 1.00 instead of 1.04 for minimum value
     L = np.array(L, dtype=float)
-    L = np.maximum(27,L)
+    L = np.maximum(26,L)
     min_value=1.0
 
     if pair_type=='nucleic_acid': min_value=2.0
@@ -127,6 +143,7 @@ def parse_pdb_atom_line(line):
     atom_num = line[6:11].strip()
     atom_name = line[12:16].strip()
     residue_name = line[17:20].strip()
+    if residue_name == "LIG": return None  # ligands in Boltz PDB-format files
     chain_id = line[21].strip()
     residue_seq_num = line[22:26].strip()
     x = line[30:38].strip()
@@ -152,7 +169,7 @@ def parse_pdb_atom_line(line):
     }
 
 def parse_cif_atom_line(line,fielddict):
-    # for parsing AF3 and Boltz1 mmCIF files
+    # for parsing AF3 and Boltz1/2 mmCIF files
     # ligands do not have residue numbers but modified residues do. Return "None" for ligand.
     # AF3 mmcif lines
     # 0      1   2   3     4  5  6 7  8  9  10      11     12      13   14    15 16 17
@@ -166,12 +183,12 @@ def parse_cif_atom_line(line,fielddict):
     #HETATM 1307 C   C     . TPO A 1 160 ? -2.115  -11.668 12.263  1.00 96.19 160 A 1
     #HETATM 1308 O   O     . TPO A 1 160 ? -1.790  -11.556 11.113  1.00 95.75 160 A 1
     # ...
-    #HETATM 2608 P   PG    . ATP C 3 .   ? -6.858  4.182   10.275  1.00 84.94 1   C 1 
-    #HETATM 2609 O   O1G   . ATP C 3 .   ? -6.178  5.238   11.074  1.00 75.56 1   C 1 
-    #HETATM 2610 O   O2G   . ATP C 3 .   ? -5.889  3.166   9.748   1.00 75.15 1   C 1 
+    #HETATM 2608 P   PG    . ATP C 3 .   ? -6.858  4.182   10.275  1.00 84.94 1   C 1
+    #HETATM 2609 O   O1G   . ATP C 3 .   ? -6.178  5.238   11.074  1.00 75.56 1   C 1
+    #HETATM 2610 O   O2G   . ATP C 3 .   ? -5.889  3.166   9.748   1.00 75.15 1   C 1
     # ...
-    #HETATM 2639 MG  MG    . MG  D 4 .   ? -7.262  2.709   4.825   1.00 91.47 1   D 1 
-    #HETATM 2640 MG  MG    . MG  E 5 .   ? -4.994  2.251   8.755   1.00 85.96 1   E 1 
+    #HETATM 2639 MG  MG    . MG  D 4 .   ? -7.262  2.709   4.825   1.00 91.47 1   D 1
+    #HETATM 2640 MG  MG    . MG  E 5 .   ? -4.994  2.251   8.755   1.00 85.96 1   E 1
 
 
     # Boltz1 mmcif files (in non-standard order))
@@ -211,12 +228,16 @@ def parse_cif_atom_line(line,fielddict):
     #HETATM 2665  O  O1B   . ATP  .    1    ?  C  -7.04640   8.36577    -7.14326   1  3  C  ATP  1  1
     #HETATM 2666  O  O2B   . ATP  .    1    ?  C  -5.79036   7.13926    -5.33995   1  3  C  ATP  1  1
 
-    
+
     linelist =        line.split()
     atom_num =        linelist[ fielddict['id'] ]
     atom_name =       linelist[ fielddict['label_atom_id'] ]
     residue_name =    linelist[ fielddict['label_comp_id'] ]
-    chain_id =        linelist[ fielddict['label_asym_id'] ]
+    if "auth_asym_id" in fielddict:
+        chain_id =    linelist[ fielddict['auth_asym_id'] ]
+    else:
+        chain_id =    linelist[ fielddict['label_asym_id'] ]
+
     residue_seq_num = linelist[ fielddict['label_seq_id'] ]
     x =               linelist[ fielddict['Cartn_x'] ]
     y =               linelist[ fielddict['Cartn_y'] ]
@@ -248,7 +269,7 @@ def parse_cif_atom_line(line,fielddict):
 def contiguous_ranges(numbers):
     if not numbers:  # Check if the set is empty
         return
-    
+
     sorted_numbers = sorted(numbers)  # Sort the numbers
     start = sorted_numbers[0]
     end = start
@@ -266,7 +287,7 @@ def contiguous_ranges(numbers):
         else:
             ranges.append(format_range(start, end))
             start = end = number
-    
+
     # Append the last range after the loop
     ranges.append(format_range(start, end))
 
@@ -290,9 +311,11 @@ def init_chainpairdict_set(chainlist):
 def classify_chains(chains, residue_types):
     nuc_residue_set = {"DA", "DC", "DT", "DG", "A", "C", "U", "G"}
     chain_types = {}
-    
+
     # Get unique chains and iterate over them
-    unique_chains = np.unique(chains)
+    _, first_idx = np.unique(chains, return_index=True)
+    unique_chains = chains[np.sort(first_idx)]
+
     for chain in unique_chains:
         # Find indices where the current chain is located
         indices = np.where(chains == chain)[0]
@@ -300,10 +323,10 @@ def classify_chains(chains, residue_types):
         chain_residues = residue_types[indices]
         # Count nucleic acid residues
         nuc_count = sum(residue in nuc_residue_set for residue in chain_residues)
-        
+
         # Determine if the chain is a nucleic acid or protein
         chain_types[chain] = 'nucleic_acid' if nuc_count > 0 else 'protein'
-    
+
     return chain_types
 
 
@@ -316,9 +339,9 @@ chains = []
 atomsitefield_num=0
 atomsitefield_dict={} # contains order of atom_site fields in mmCIF files; handles any mmCIF field order
 
-# For af3 and boltz1: need mask to identify CA atom tokens in plddt vector and pae matrix;
+# For af3 and boltz: need mask to identify CA atom tokens in plddt vector and pae matrix;
 # Skip ligand atom tokens and non-CA-atom tokens in PTMs (those not in residue_set)
-token_mask=list()     
+token_mask=list()
 residue_set= {"ALA", "ARG", "ASN", "ASP", "CYS",
               "GLN", "GLU", "GLY", "HIS", "ILE",
               "LEU", "LYS", "MET", "PHE", "PRO",
@@ -335,7 +358,8 @@ with open(pdb_path, 'r') as PDB:
             (atomsite,fieldname)=line.split(".")
             atomsitefield_dict[fieldname]=atomsitefield_num
             atomsitefield_num += 1
-            
+            continue
+        
         if line.startswith("ATOM") or line.startswith("HETATM"):
             if cif:
                 atom=parse_cif_atom_line(line, atomsitefield_dict)
@@ -367,7 +391,7 @@ with open(pdb_path, 'r') as PDB:
                     'residue': f"{atom['residue_name']:3}   {atom['chain_id']:3} {atom['residue_seq_num']:4}"
                 })
 
-            # add nucleic acids and non-CA atoms in PTM residues to tokens (as 0), whether labeled as "HETATM" (af3) or as "ATOM" (boltz1)
+            # add nucleic acids and non-CA atoms in PTM residues to tokens (as 0), whether labeled as "HETATM" (af3) or as "ATOM" (boltz)
             if atom['atom_name'] != "CA" and "C1" not in atom['atom_name'] and atom['residue_name'] not in residue_set:
                 token_mask.append(0)
 
@@ -377,7 +401,9 @@ CA_atom_num=  np.array([res['atom_num']-1 for res in residues])  # for AF3 atom 
 CB_atom_num=  np.array([res['atom_num']-1 for res in cb_residues])  # for AF3 atom indexing from 0
 coordinates = np.array([res['coor']       for res in cb_residues])
 chains = np.array(chains)
-unique_chains = np.unique(chains)
+
+_, first_idx = np.unique(chains, return_index=True)
+unique_chains = chains[np.sort(first_idx)]
 token_array=np.array(token_mask)
 ntokens=np.sum(token_array)
 residue_types=np.array([res['res'] for res in residues])
@@ -394,13 +420,12 @@ for chain1 in unique_chains:
             chain_pair_type[chain1][chain2]='nucleic_acid'
         else:
             chain_pair_type[chain1][chain2]='protein'
-        
+
 # Calculate distance matrix using NumPy broadcasting
 distances = np.sqrt(((coordinates[:, np.newaxis, :] - coordinates[np.newaxis, :, :])**2).sum(axis=2))
 
-# Load AF2, AF3, or BOLTZ1 data and extract plddt and pae_matrix (and ptm_matrix if available)
+# Load AF2, AF3, or BOLTZ data and extract plddt and pae_matrix (and ptm_matrix if available)
 if af2:
-    
 
     if os.path.exists(pae_file_path):
         if pae_file_path.endswith('.pkl'):
@@ -408,71 +433,84 @@ if af2:
         else:
             with open(pae_file_path, 'r') as file:
                 data = json.load(file)
-                
+
         if 'iptm' in data: iptm_af2 =   float(data['iptm'])
         else: iptm_af2=-1.0
         if 'ptm' in data: ptm_af2  =   float(data['ptm'])
         else: ptm_af2=-1.0
-    
+
         if 'plddt' in data:
             plddt =      np.array(data['plddt'])
             cb_plddt =   np.array(data['plddt'])  # for pDockQ
         else:
             plddt = np.zeros(numres)
             cb_plddt = np.zeros(numres)
-            
+
         if 'pae' in data:
             pae_matrix = np.array(data['pae'])
         elif 'predicted_aligned_error' in data:
             pae_matrix=np.array(data['predicted_aligned_error'])
-            
+
     else:
         print("AF2 PAE file does not exist: ", pae_file_path)
         sys.exit()
-        
-if boltz1:
-    # Boltz1 filenames:
+
+if boltz:
+    # Boltz filenames:
     # AURKA_TPX2_model_0.cif
     # confidence_AURKA_TPX2_model_0.json
     # pae_AURKA_TPX2_model_0.npz
     # plddt_AURKA_TPX2_model_0.npz
-    
+
 
     plddt_file_path=pae_file_path.replace("pae","plddt")
     if os.path.exists(plddt_file_path):
-        data_plddt=np.load(plddt_file_path)
-        plddt_boltz1=np.array(100.0*data_plddt['plddt'])
-        plddt =    plddt_boltz1[np.ix_(token_array.astype(bool))]
-        cb_plddt = plddt_boltz1[np.ix_(token_array.astype(bool))]
+        data_plddt = np.load(plddt_file_path)
+
+        raw_plddt = data_plddt['plddt']
+        # Only multiply by 100 if the max value is <= 1.0 (meaning it's normalized)
+        if np.max(raw_plddt) <= 1.0:
+            plddt_boltz = np.array(100.0 * raw_plddt)
+        else:
+            plddt_boltz = np.array(raw_plddt)
+
+        plddt =    plddt_boltz[np.ix_(token_array.astype(bool))]
+        cb_plddt = plddt_boltz[np.ix_(token_array.astype(bool))]
     else:
         plddt = np.zeros(ntokens)
         cb_plddt = np.zeros(ntokens)
-        
+
     if os.path.exists(pae_file_path):
         data_pae = np.load(pae_file_path)
-        pae_matrix_boltz1=np.array(data_pae['pae'])
-        pae_matrix = pae_matrix_boltz1[np.ix_(token_array.astype(bool), token_array.astype(bool))]
+        pae_matrix_boltz=np.array(data_pae['pae'])
+        pae_matrix = pae_matrix_boltz[np.ix_(token_array.astype(bool), token_array.astype(bool))]
 
     else:
-        print("Boltz1 PAE file does not exist: ", pae_file_path)
+        print("Boltz PAE file does not exist: ", pae_file_path)
         sys.exit()
-    
+
     summary_file_path=pae_file_path.replace("pae","confidence")
     summary_file_path=summary_file_path.replace(".npz",".json")
-    iptm_boltz1=   {chain1: {chain2: 0     for chain2 in unique_chains if chain1 != chain2} for chain1 in unique_chains}
+    iptm_boltz=   {chain1: {chain2: 0     for chain2 in unique_chains if chain1 != chain2} for chain1 in unique_chains}
     if os.path.exists(summary_file_path):
         with open(summary_file_path, 'r') as file:
             data_summary = json.load(file)
 
-            boltz1_chain_pair_iptm_data=data_summary['pair_chains_iptm']
-            for chain1 in unique_chains:
-                nchain1=  ord(chain1) - ord('A')  # map A,B,C... to 0,1,2...
-                for chain2 in unique_chains:
+            if 'pair_chains_iptm' in data_summary:
+                boltz_chain_pair_iptm_data=data_summary['pair_chains_iptm']
+            else:
+                # Boltz missing key fallback
+                print(f"Warning: 'pair_chains_iptm' key not found in {summary_file_path}. ipTM scores will be 0.")
+                boltz_chain_pair_iptm_data = {}
+
+            
+            boltz_chain_pair_iptm_data=data_summary['pair_chains_iptm']
+            for nchain1, chain1 in enumerate(unique_chains):
+                for nchain2, chain2 in enumerate(unique_chains):
                     if chain1 == chain2: continue
-                    nchain2=ord(chain2) - ord('A')
-                    iptm_boltz1[chain1][chain2]=boltz1_chain_pair_iptm_data[str(nchain1)][str(nchain2)]
+                    iptm_boltz[chain1][chain2]=boltz_chain_pair_iptm_data[str(nchain1)][str(nchain2)]
     else:
-        print("Boltz1 summary file does not exist: ", summary_file_path)
+        print("Boltz summary file does not exist: ", summary_file_path)
 
 if af3:
     # Example Alphafold3 server filenames
@@ -490,10 +528,14 @@ if af3:
         print("AF3 PAE file does not exist: ", pae_file_path)
         sys.exit()
 
-    atom_plddts=np.array(data['atom_plddts'])
-    plddt=atom_plddts[CA_atom_num]  # pull out residue plddts from Calpha atoms
-    cb_plddt=atom_plddts[CB_atom_num]  # pull out residue plddts from Cbeta atoms for pDockQ
-        
+    if "atom_plddts" in data:
+        atom_plddts=np.array(data['atom_plddts'])
+        plddt=atom_plddts[CA_atom_num]  # pull out residue plddts from Calpha atoms
+        cb_plddt=atom_plddts[CB_atom_num]  # pull out residue plddts from Cbeta atoms for pDockQ
+    else:
+        plddt = np.zeros(numres)
+        cb_plddt = np.zeros(numres)
+
     # Get pairwise residue PAE matrix by identifying one token per protein residue.
     # Modified residues have separate tokens for each atom, so need to pull out Calpha atom as token
     # Skip ligands
@@ -502,7 +544,7 @@ if af3:
     else:
         print("no PAE data in AF3 json file; quitting")
         sys.exit()
-    
+
     # Set pae_matrix for AF3 from subset of full PAE matrix from json file
     token_array=np.array(token_mask)
     pae_matrix = pae_matrix_af3[np.ix_(token_array.astype(bool), token_array.astype(bool))]
@@ -519,11 +561,9 @@ if af3:
         with open(summary_file_path,'r') as file:
             data_summary=json.load(file)
         af3_chain_pair_iptm_data=data_summary['chain_pair_iptm']
-        for chain1 in unique_chains:
-            nchain1=  ord(chain1) - ord('A')  # map A,B,C... to 0,1,2...
-            for chain2 in unique_chains:
+        for nchain1, chain1 in enumerate(unique_chains):
+            for nchain2, chain2 in enumerate(unique_chains):
                 if chain1 == chain2: continue
-                nchain2=ord(chain2) - ord('A')
                 iptm_af3[chain1][chain2]=af3_chain_pair_iptm_data[nchain1][nchain2]
     else:
         print("AF3 summary file does not exist: ", summary_file_path)
@@ -536,7 +576,7 @@ if af3:
 # ipsae_d0chn = calculate ipsae from PAEs with PAE cutoff;    d0 = numres in chain pair = len(chain1) + len(chain2)
 # ipsae_d0dom = calculate ipsae from PAEs with PAE cutoff;    d0 from number of residues in chain1 and chain2 that have interchain PAE<cutoff
 # ipsae_d0res = calculate ipsae from PAEs with PAE cutoff;    d0 from number of residues in chain2 that have interchain PAE<cutoff given residue in chain1
-# 
+#
 # for each chain_pair iptm/ipsae, there is (for example)
 # ipsae_d0res_byres = by-residue array;
 # ipsae_d0res_asym  = asymmetric pair value (A->B is different from B->A)
@@ -617,7 +657,7 @@ for chain1 in unique_chains:
 
                 for residue in chain2residues:
                     pDockQ_unique_residues[chain1][chain2].add(residue)
-                    
+
         if npairs>0:
             nres=len(list(pDockQ_unique_residues[chain1][chain2]))
             mean_plddt= cb_plddt[ list(pDockQ_unique_residues[chain1][chain2])].mean()
@@ -628,7 +668,7 @@ for chain1 in unique_chains:
             x=0.0
             pDockQ[chain1][chain2]=0.0
             nres=0
-        
+
 # pDockQ2
 
 for chain1 in unique_chains:
@@ -646,7 +686,7 @@ for chain1 in unique_chains:
                 pae_list=pae_matrix[i][valid_pairs]
                 pae_list_ptm=ptm_func_vec(pae_list,10.0)
                 sum += pae_list_ptm.sum()
-            
+
         if npairs>0:
             nres=len(list(pDockQ_unique_residues[chain1][chain2]))
             mean_plddt= cb_plddt[ list(pDockQ_unique_residues[chain1][chain2])].mean()
@@ -658,18 +698,18 @@ for chain1 in unique_chains:
             x=0.0
             nres=0
             pDockQ2[chain1][chain2]=0.0
-        
+
 # LIS
 
 for chain1 in unique_chains:
     for chain2 in unique_chains:
         if chain1==chain2: continue
-        
+
         mask = (chains[:, None] == chain1) & (chains[None, :] == chain2)  # Select residues for (chain1, chain2)
         selected_pae = pae_matrix[mask]  # Get PAE values for this pair
-        
+
         if selected_pae.size > 0:  # Ensure we have values
-            valid_pae = selected_pae[selected_pae <= 12]  # Apply the threshold
+            valid_pae = selected_pae[selected_pae < 12]  # Apply the threshold
             if valid_pae.size > 0:
                 scores = (12 - valid_pae) / 12  # Compute scores
                 avg_score = np.mean(scores)  # Average score for (chain1, chain2)
@@ -694,7 +734,7 @@ for chain1 in unique_chains:
         ptm_matrix_d0chn=ptm_func_vec(pae_matrix,d0chn[chain1][chain2])
 
         valid_pairs_iptm = (chains == chain2)
-        valid_pairs_matrix = (chains == chain2) & (pae_matrix < pae_cutoff)
+        valid_pairs_matrix = np.outer(chains == chain1, chains == chain2) & (pae_matrix < pae_cutoff)
 
         for i in range(numres):
 
@@ -714,7 +754,7 @@ for chain1 in unique_chains:
                 for j in np.where(valid_pairs_ipsae)[0]:
                     jresnum=residues[j]['resnum']
                     unique_residues_chain2[chain1][chain2].add(jresnum)
-                    
+
             # Track unique residues contributing to iptm in interface
             valid_pairs = (chains == chain2) & (pae_matrix[i] < pae_cutoff) & (distances[i] < dist_cutoff)
             dist_valid_pair_counts[chain1][chain2] += np.sum(valid_pairs)
@@ -740,7 +780,7 @@ for chain1 in unique_chains:
         ptm_matrix_d0dom = np.zeros((numres,numres))
         ptm_matrix_d0dom = ptm_func_vec(pae_matrix,d0dom[chain1][chain2])
 
-        valid_pairs_matrix = (chains == chain2) & (pae_matrix < pae_cutoff)
+        valid_pairs_matrix = np.outer(chains == chain1, chains == chain2) & (pae_matrix < pae_cutoff)
 
         # Assuming valid_pairs_matrix is already defined
         n0res_byres_all = np.sum(valid_pairs_matrix, axis=1)
@@ -748,7 +788,7 @@ for chain1 in unique_chains:
 
         n0res_byres[chain1][chain2] = n0res_byres_all
         d0res_byres[chain1][chain2] = d0res_byres_all
-        
+
         for i in range(numres):
             if chains[i] != chain1:
                 continue
@@ -777,7 +817,7 @@ for chain1 in unique_chains:
                 f'{ipsae_d0res_byres[chain1][chain2][i]:8.4f}\n'
             )
             OUT2.write(outstring)
-            
+
 # Compute interchain ipTM and ipSAE for each chain pair
 for chain1 in unique_chains:
     for chain2 in unique_chains:
@@ -860,7 +900,7 @@ for chain1 in unique_chains:
             d0res_max[chain1][chain2]=maxd0
             d0res_max[chain2][chain1]=maxd0
 
-                
+
 chaincolor={'A':'magenta',   'B':'marine',   'C':'lime',        'D':'orange',
             'E':'yellow',    'F':'cyan',     'G':'lightorange', 'H':'pink',
             'I':'deepteal',  'J':'forest',   'K':'lightblue',   'L':'slate',
@@ -903,8 +943,8 @@ for pair in sorted(chainpairs):
         dist_pairs = dist_valid_pair_counts[chain1][chain2]
         if af2: iptm_af = iptm_af2  # same for all chain pairs in entry
         if af3: iptm_af = iptm_af3[chain1][chain2]  # symmetric value for each chain pair
-        if boltz1: iptm_af=iptm_boltz1[chain1][chain2]
-        
+        if boltz: iptm_af=iptm_boltz[chain1][chain2]
+
         outstring=f'{chain1}    {chain2}     {pae_string:3}  {dist_string:3}  {"asym":5} ' + (
             f'{ipsae_d0res_asym[chain1][chain2]:8.6f}    '
             f'{ipsae_d0chn_asym[chain1][chain2]:8.6f}    '
@@ -935,8 +975,8 @@ for pair in sorted(chainpairs):
 
             iptm_af_value=iptm_af
             pDockQ2_value=max(pDockQ2[chain1][chain2], pDockQ2[chain2][chain1])
-            if boltz1:
-                iptm_af_value=max(iptm_boltz1[chain1][chain2], iptm_boltz1[chain2][chain1])
+            if boltz:
+                iptm_af_value=max(iptm_boltz[chain1][chain2], iptm_boltz[chain2][chain1])
 
 
             LIS_Score=(LIS[chain1][chain2]+LIS[chain2][chain1])/2.0
@@ -962,7 +1002,7 @@ for pair in sorted(chainpairs):
                 f'{pdb_stem}\n')
             OUT.write(outstring)
             PML.write("# " + outstring)
-                
+
         chain_pair= f'color_{chain1}_{chain2}'
         chain1_residues = f'chain  {chain1} and resi {contiguous_ranges(unique_residues_chain1[chain1][chain2])}'
         chain2_residues = f'chain  {chain2} and resi {contiguous_ranges(unique_residues_chain2[chain1][chain2])}'
